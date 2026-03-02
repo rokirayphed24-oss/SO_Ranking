@@ -8,6 +8,7 @@ from reportlab.lib.units import inch
 from reportlab.lib.pagesizes import landscape, A4
 
 st.set_page_config(layout="wide")
+st.image("logo.jpg", width=140)
 st.title("JJM Performance Monitoring Dashboard")
 
 st.markdown("Upload BFM, Functionality and SO Details files")
@@ -313,4 +314,5 @@ if st.session_state.reports_generated:
                        generate_pdf("Division Ranking", st.session_state.div_group),
                        "Division_Ranking_Report.pdf",
                        "application/pdf")
+
 
