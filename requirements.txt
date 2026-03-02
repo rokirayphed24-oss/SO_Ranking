@@ -12,6 +12,8 @@ streamlit-plotly-events
 openpyxl
 xlsxwriter
 matplotlib
+reportlab
+
 
 
 
