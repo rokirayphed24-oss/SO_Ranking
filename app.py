@@ -12,6 +12,20 @@ st.title("JJM Performance Monitoring Dashboard")
 
 st.markdown("Upload BFM, Functionality and SO Details files")
 
+# ================= SESSION STATE =================
+
+if "reports_generated" not in st.session_state:
+    st.session_state.reports_generated = False
+if "so_group" not in st.session_state:
+    st.session_state.so_group = None
+if "sub_group" not in st.session_state:
+    st.session_state.sub_group = None
+if "div_group" not in st.session_state:
+    st.session_state.div_group = None
+
+
+# ================= FILE UPLOAD =================
+
 bfm_file = st.file_uploader("Upload BFM File", type=["xlsx", "csv"])
 func_file = st.file_uploader("Upload Functionality File", type=["xlsx", "csv"])
 so_file = st.file_uploader("Upload SO Details File", type=["xlsx", "csv"])
@@ -42,7 +56,7 @@ def read_file(file):
     return read_excel_safe(file)
 
 
-# ================= ROUND NUMERIC COLUMNS =================
+# ================= ROUND NUMERIC =================
 
 def round_numeric_columns(df):
     numeric_cols = df.select_dtypes(include=['float', 'float64']).columns
@@ -50,7 +64,7 @@ def round_numeric_columns(df):
     return df
 
 
-# ================= RANK-BASED GRADING =================
+# ================= RANK BASED GRADING =================
 
 def assign_grade_by_rank(df):
     total = len(df)
@@ -70,7 +84,7 @@ def assign_grade_by_rank(df):
     return df
 
 
-# ================= STYLE ONLY RANK COLUMN =================
+# ================= STYLE RANK ONLY =================
 
 def style_rank_column(df):
 
@@ -88,7 +102,7 @@ def style_rank_column(df):
     )
 
 
-# ================= AUTO-FIT LANDSCAPE PDF =================
+# ================= PDF AUTO FIT =================
 
 def generate_pdf(title, df):
 
@@ -155,7 +169,7 @@ def generate_pdf(title, df):
     return buffer
 
 
-# ================= MAIN =================
+# ================= MAIN LOGIC =================
 
 if generate:
 
@@ -222,14 +236,7 @@ if generate:
         so_group = assign_grade_by_rank(so_group)
         so_group = round_numeric_columns(so_group)
 
-        st.header("SO Ranking")
-        st.dataframe(style_rank_column(so_group))
-        st.download_button("Download SO Ranking PDF",
-                           generate_pdf("SO Ranking", so_group),
-                           "SO_Ranking_Report.pdf",
-                           "application/pdf")
-
-        # ================= SUBDIVISION =================
+        # ================= SUB =================
         sub_group = df.groupby(['sub_divisions', 'division']).agg({
             'so_name': 'nunique',
             'bfm_%': 'mean',
@@ -251,14 +258,7 @@ if generate:
         sub_group = assign_grade_by_rank(sub_group)
         sub_group = round_numeric_columns(sub_group)
 
-        st.header("Subdivision Ranking")
-        st.dataframe(style_rank_column(sub_group))
-        st.download_button("Download Subdivision Ranking PDF",
-                           generate_pdf("Subdivision Ranking", sub_group),
-                           "Subdivision_Ranking_Report.pdf",
-                           "application/pdf")
-
-        # ================= DIVISION =================
+        # ================= DIV =================
         div_group = df.groupby(['division']).agg({
             'sub_divisions': 'nunique',
             'bfm_%': 'mean',
@@ -280,12 +280,36 @@ if generate:
         div_group = assign_grade_by_rank(div_group)
         div_group = round_numeric_columns(div_group)
 
-        st.header("Division Ranking")
-        st.dataframe(style_rank_column(div_group))
-        st.download_button("Download Division Ranking PDF",
-                           generate_pdf("Division Ranking", div_group),
-                           "Division_Ranking_Report.pdf",
-                           "application/pdf")
+        st.session_state.so_group = so_group
+        st.session_state.sub_group = sub_group
+        st.session_state.div_group = div_group
+        st.session_state.reports_generated = True
 
     except Exception as e:
         st.error(f"Critical Error: {e}")
+
+
+# ================= DISPLAY PERSISTENT =================
+
+if st.session_state.reports_generated:
+
+    st.header("SO Ranking")
+    st.dataframe(style_rank_column(st.session_state.so_group))
+    st.download_button("Download SO Ranking PDF",
+                       generate_pdf("SO Ranking", st.session_state.so_group),
+                       "SO_Ranking_Report.pdf",
+                       "application/pdf")
+
+    st.header("Subdivision Ranking")
+    st.dataframe(style_rank_column(st.session_state.sub_group))
+    st.download_button("Download Subdivision Ranking PDF",
+                       generate_pdf("Subdivision Ranking", st.session_state.sub_group),
+                       "Subdivision_Ranking_Report.pdf",
+                       "application/pdf")
+
+    st.header("Division Ranking")
+    st.dataframe(style_rank_column(st.session_state.div_group))
+    st.download_button("Download Division Ranking PDF",
+                       generate_pdf("Division Ranking", st.session_state.div_group),
+                       "Division_Ranking_Report.pdf",
+                       "application/pdf")
