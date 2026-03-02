@@ -1,0 +1,14 @@
+streamlit
+pandas
+numpy
+sqlalchemy
+opencv-python-headless
+pytesseract
+Pillow
+matplotlib
+plotly
+altair
+streamlit-plotly-events
+
+
+
