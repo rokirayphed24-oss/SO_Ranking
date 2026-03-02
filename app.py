@@ -1,14 +1,17 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
 from io import BytesIO
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import inch
+from reportlab.lib.pagesizes import landscape, A4
 
 st.set_page_config(layout="wide")
 st.title("JJM Performance Monitoring Dashboard")
 
 st.markdown("Upload BFM, Functionality and SO Details files")
 
-# ================= FILE UPLOAD =================
 bfm_file = st.file_uploader("Upload BFM File", type=["xlsx", "csv"])
 func_file = st.file_uploader("Upload Functionality File", type=["xlsx", "csv"])
 so_file = st.file_uploader("Upload SO Details File", type=["xlsx", "csv"])
@@ -16,7 +19,7 @@ so_file = st.file_uploader("Upload SO Details File", type=["xlsx", "csv"])
 generate = st.button("Generate Report")
 
 
-# ================= HEADER DETECTION =================
+# ================= FILE READ =================
 
 def detect_header(file):
     raw = pd.read_excel(file, header=None)
@@ -26,7 +29,6 @@ def detect_header(file):
             return i
     return None
 
-
 def read_excel_safe(file):
     header_row = detect_header(file)
     if header_row is None:
@@ -34,37 +36,123 @@ def read_excel_safe(file):
         st.stop()
     return pd.read_excel(file, header=header_row)
 
-
 def read_file(file):
     if file.name.endswith(".csv"):
         return pd.read_csv(file)
     return read_excel_safe(file)
 
 
-def calculate_grade(score):
-    if score >= 90:
-        return "Excellent"
-    elif score >= 80:
-        return "Good"
-    elif score >= 70:
-        return "Needs Improvement"
-    else:
-        return "Critical"
+# ================= ROUND NUMERIC COLUMNS =================
+
+def round_numeric_columns(df):
+    numeric_cols = df.select_dtypes(include=['float', 'float64']).columns
+    df[numeric_cols] = df[numeric_cols].round(2)
+    return df
 
 
-def apply_traffic_colors(df, column):
-    top = df[column].quantile(0.67)
-    bottom = df[column].quantile(0.33)
+# ================= RANK-BASED GRADING =================
 
-    def color(val):
-        if val >= top:
-            return "background-color: #28a745; color: white"
-        elif val <= bottom:
-            return "background-color: #dc3545; color: white"
+def assign_grade_by_rank(df):
+    total = len(df)
+    top_cut = round(total * 0.33)
+    mid_cut = round(total * 0.66)
+
+    grades = []
+    for r in df["rank"]:
+        if r <= top_cut:
+            grades.append("Good")
+        elif r <= mid_cut:
+            grades.append("Needs Improvement")
         else:
-            return "background-color: #ffc107; color: black"
+            grades.append("Critical")
 
-    return df.style.applymap(color, subset=[column])
+    df["grade"] = grades
+    return df
+
+
+# ================= STYLE ONLY RANK COLUMN =================
+
+def style_rank_column(df):
+
+    def color_rank(row):
+        if row["grade"] == "Good":
+            return "background-color:#2ecc71; color:white"
+        elif row["grade"] == "Needs Improvement":
+            return "background-color:#f1c40f; color:black"
+        else:
+            return "background-color:#e74c3c; color:white"
+
+    return df.style.apply(
+        lambda row: [color_rank(row) if col == "rank" else "" for col in df.columns],
+        axis=1
+    )
+
+
+# ================= AUTO-FIT LANDSCAPE PDF =================
+
+def generate_pdf(title, df):
+
+    buffer = BytesIO()
+
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(A4),
+        rightMargin=20,
+        leftMargin=20,
+        topMargin=20,
+        bottomMargin=20
+    )
+
+    elements = []
+    styles = getSampleStyleSheet()
+
+    elements.append(Paragraph(title, styles["Heading2"]))
+    elements.append(Spacer(1, 0.3 * inch))
+
+    data = [df.columns.tolist()] + df.values.tolist()
+
+    page_width = landscape(A4)[0] - doc.leftMargin - doc.rightMargin
+    col_count = len(df.columns)
+    col_width = page_width / col_count
+
+    table = Table(data, colWidths=[col_width]*col_count, repeatRows=1)
+
+    style = TableStyle([
+        ('BACKGROUND',(0,0),(-1,0),colors.grey),
+        ('GRID',(0,0),(-1,-1),0.5,colors.black),
+        ('FONTSIZE',(0,0),(-1,-1),7)
+    ])
+
+    rank_index = df.columns.get_loc("rank")
+
+    total = len(df)
+    top_cut = round(total * 0.33)
+    mid_cut = round(total * 0.66)
+
+    for i in range(1, len(data)):
+        rank_val = data[i][rank_index]
+
+        if rank_val <= top_cut:
+            bg = colors.green
+        elif rank_val <= mid_cut:
+            bg = colors.yellow
+        else:
+            bg = colors.red
+
+        style.add('BACKGROUND', (rank_index, i), (rank_index, i), bg)
+
+    table.setStyle(style)
+    elements.append(table)
+
+    elements.append(Spacer(1, 0.4 * inch))
+    elements.append(Paragraph("Legend:", styles["Heading3"]))
+    elements.append(Paragraph("Green → Top 33% (Good)", styles["Normal"]))
+    elements.append(Paragraph("Yellow → Middle 33% (Needs Improvement)", styles["Normal"]))
+    elements.append(Paragraph("Red → Bottom 34% (Critical)", styles["Normal"]))
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
 
 
 # ================= MAIN =================
@@ -76,51 +164,25 @@ if generate:
         st.stop()
 
     try:
-        # Read files safely
         bfm = read_file(bfm_file)
         func = read_file(func_file)
         so = read_file(so_file)
 
-        # Clean column names
         bfm.columns = bfm.columns.str.strip().str.lower()
         func.columns = func.columns.str.strip().str.lower()
         so.columns = so.columns.str.strip().str.lower()
 
-        # Validate required columns
-        required_func = ['imis_id', 'functional_days', 'work_status']
-        required_so = ['imis_id', 'so_name', 'sub_divisions', 'division']
-        required_bfm = ['imis_id', 'no_of_days_bfm_reported']
-
-        for col in required_func:
-            if col not in func.columns:
-                st.error(f"Missing column in Functionality file: {col}")
-                st.stop()
-
-        for col in required_so:
-            if col not in so.columns:
-                st.error(f"Missing column in SO file: {col}")
-                st.stop()
-
-        for col in required_bfm:
-            if col not in bfm.columns:
-                st.error(f"Missing column in BFM file: {col}")
-                st.stop()
-
-        # Keep handed-over schemes only
         func = func[func['work_status'].str.lower() == "handed-over"]
 
-        # Remove division from func to prevent duplication
         if "division" in func.columns:
             func = func.drop(columns=["division"])
 
-        # Merge SO (source of division)
         df = func.merge(
             so[['imis_id', 'so_name', 'sub_divisions', 'division']],
             on='imis_id',
             how='left'
         )
 
-        # Merge BFM
         df = df.merge(
             bfm[['imis_id', 'no_of_days_bfm_reported']],
             on='imis_id',
@@ -129,13 +191,6 @@ if generate:
 
         df['no_of_days_bfm_reported'] = df['no_of_days_bfm_reported'].fillna(0)
 
-        # Hard validation of division column
-        if 'division' not in df.columns:
-            st.error("Division column missing after merge.")
-            st.write("Available columns:", df.columns.tolist())
-            st.stop()
-
-        # Detect month days dynamically
         max_days = max(
             df['functional_days'].max(),
             df['no_of_days_bfm_reported'].max()
@@ -145,7 +200,7 @@ if generate:
         df['functionality_%'] = (df['functional_days'] / max_days) * 100
         df['performance_%'] = 0.5 * df['bfm_%'] + 0.5 * df['functionality_%']
 
-        # ================= SO LEVEL =================
+        # ================= SO =================
         so_group = df.groupby(['so_name', 'sub_divisions', 'division']).agg({
             'imis_id': 'count',
             'bfm_%': 'mean',
@@ -162,11 +217,19 @@ if generate:
         max_weighted = so_group['weighted_score'].max()
         so_group['final_performance_%'] = (so_group['weighted_score'] / max_weighted) * 100
 
-        so_group['grade'] = so_group['final_performance_%'].apply(calculate_grade)
         so_group = so_group.sort_values("final_performance_%", ascending=False)
         so_group['rank'] = range(1, len(so_group) + 1)
+        so_group = assign_grade_by_rank(so_group)
+        so_group = round_numeric_columns(so_group)
 
-        # ================= SUBDIVISION LEVEL =================
+        st.header("SO Ranking")
+        st.dataframe(style_rank_column(so_group))
+        st.download_button("Download SO Ranking PDF",
+                           generate_pdf("SO Ranking", so_group),
+                           "SO_Ranking_Report.pdf",
+                           "application/pdf")
+
+        # ================= SUBDIVISION =================
         sub_group = df.groupby(['sub_divisions', 'division']).agg({
             'so_name': 'nunique',
             'bfm_%': 'mean',
@@ -183,11 +246,19 @@ if generate:
         max_weighted_sub = sub_group['weighted_score'].max()
         sub_group['final_performance_%'] = (sub_group['weighted_score'] / max_weighted_sub) * 100
 
-        sub_group['grade'] = sub_group['final_performance_%'].apply(calculate_grade)
         sub_group = sub_group.sort_values("final_performance_%", ascending=False)
         sub_group['rank'] = range(1, len(sub_group) + 1)
+        sub_group = assign_grade_by_rank(sub_group)
+        sub_group = round_numeric_columns(sub_group)
 
-        # ================= DIVISION LEVEL =================
+        st.header("Subdivision Ranking")
+        st.dataframe(style_rank_column(sub_group))
+        st.download_button("Download Subdivision Ranking PDF",
+                           generate_pdf("Subdivision Ranking", sub_group),
+                           "Subdivision_Ranking_Report.pdf",
+                           "application/pdf")
+
+        # ================= DIVISION =================
         div_group = df.groupby(['division']).agg({
             'sub_divisions': 'nunique',
             'bfm_%': 'mean',
@@ -204,19 +275,17 @@ if generate:
         max_weighted_div = div_group['weighted_score'].max()
         div_group['final_performance_%'] = (div_group['weighted_score'] / max_weighted_div) * 100
 
-        div_group['grade'] = div_group['final_performance_%'].apply(calculate_grade)
         div_group = div_group.sort_values("final_performance_%", ascending=False)
         div_group['rank'] = range(1, len(div_group) + 1)
-
-        # ================= DISPLAY =================
-        st.header("SO Ranking")
-        st.dataframe(apply_traffic_colors(so_group, "final_performance_%"))
-
-        st.header("Subdivision Ranking")
-        st.dataframe(apply_traffic_colors(sub_group, "final_performance_%"))
+        div_group = assign_grade_by_rank(div_group)
+        div_group = round_numeric_columns(div_group)
 
         st.header("Division Ranking")
-        st.dataframe(apply_traffic_colors(div_group, "final_performance_%"))
+        st.dataframe(style_rank_column(div_group))
+        st.download_button("Download Division Ranking PDF",
+                           generate_pdf("Division Ranking", div_group),
+                           "Division_Ranking_Report.pdf",
+                           "application/pdf")
 
     except Exception as e:
         st.error(f"Critical Error: {e}")
