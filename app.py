@@ -293,23 +293,24 @@ if generate:
 
 if st.session_state.reports_generated:
 
-    st.header("SO Ranking")
+    st.header("🏅SO Ranking")
     st.dataframe(style_rank_column(st.session_state.so_group))
     st.download_button("Download SO Ranking PDF",
                        generate_pdf("SO Ranking", st.session_state.so_group),
                        "SO_Ranking_Report.pdf",
                        "application/pdf")
 
-    st.header("Subdivision Ranking")
+    st.header("🏅Subdivision Ranking")
     st.dataframe(style_rank_column(st.session_state.sub_group))
     st.download_button("Download Subdivision Ranking PDF",
                        generate_pdf("Subdivision Ranking", st.session_state.sub_group),
                        "Subdivision_Ranking_Report.pdf",
                        "application/pdf")
 
-    st.header("Division Ranking")
+    st.header("🏅Division Ranking")
     st.dataframe(style_rank_column(st.session_state.div_group))
     st.download_button("Download Division Ranking PDF",
                        generate_pdf("Division Ranking", st.session_state.div_group),
                        "Division_Ranking_Report.pdf",
                        "application/pdf")
+
