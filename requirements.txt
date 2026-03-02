@@ -9,6 +9,11 @@ matplotlib
 plotly
 altair
 streamlit-plotly-events
+openpyxl
+xlsxwriter
+matplotlib
+
+
 
 
 
