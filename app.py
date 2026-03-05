@@ -228,12 +228,16 @@ if generate:
         so_group['workload_factor'] = 1 + (so_group['schemes'] / max_schemes)
         so_group['weighted_score'] = so_group['performance_%'] * so_group['workload_factor']
 
-        max_weighted = so_group['weighted_score'].max()
-        so_group['final_performance_%'] = (so_group['weighted_score'] / max_weighted) * 100
-
-        so_group = so_group.sort_values("final_performance_%", ascending=False)
+        so_group = so_group.sort_values("weighted_score", ascending=False)
+        so_group['sl_no'] = range(1, len(so_group) + 1)
         so_group['rank'] = range(1, len(so_group) + 1)
         so_group = assign_grade_by_rank(so_group)
+        
+        # Reorder columns: sl_no first
+        cols = ['sl_no', 'so_name', 'sub_divisions', 'division', 'schemes', 'bfm_%', 
+                'functionality_%', 'performance_%', 'workload_factor', 'weighted_score', 'rank', 'grade']
+        so_group = so_group[cols]
+        
         so_group = round_numeric_columns(so_group)
 
         # ================= SUB =================
@@ -250,12 +254,16 @@ if generate:
         sub_group['workload_factor'] = 1 + (sub_group['schemes'] / max_schemes)
         sub_group['weighted_score'] = sub_group['performance_%'] * sub_group['workload_factor']
 
-        max_weighted_sub = sub_group['weighted_score'].max()
-        sub_group['final_performance_%'] = (sub_group['weighted_score'] / max_weighted_sub) * 100
-
-        sub_group = sub_group.sort_values("final_performance_%", ascending=False)
+        sub_group = sub_group.sort_values("weighted_score", ascending=False)
+        sub_group['sl_no'] = range(1, len(sub_group) + 1)
         sub_group['rank'] = range(1, len(sub_group) + 1)
         sub_group = assign_grade_by_rank(sub_group)
+        
+        # Reorder columns: sl_no first
+        cols = ['sl_no', 'sub_divisions', 'division', 'schemes', 'bfm_%', 
+                'functionality_%', 'performance_%', 'workload_factor', 'weighted_score', 'rank', 'grade']
+        sub_group = sub_group[cols]
+        
         sub_group = round_numeric_columns(sub_group)
 
         # ================= DIV =================
@@ -272,12 +280,16 @@ if generate:
         div_group['workload_factor'] = 1 + (div_group['schemes'] / max_schemes)
         div_group['weighted_score'] = div_group['performance_%'] * div_group['workload_factor']
 
-        max_weighted_div = div_group['weighted_score'].max()
-        div_group['final_performance_%'] = (div_group['weighted_score'] / max_weighted_div) * 100
-
-        div_group = div_group.sort_values("final_performance_%", ascending=False)
+        div_group = div_group.sort_values("weighted_score", ascending=False)
+        div_group['sl_no'] = range(1, len(div_group) + 1)
         div_group['rank'] = range(1, len(div_group) + 1)
         div_group = assign_grade_by_rank(div_group)
+        
+        # Reorder columns: sl_no first
+        cols = ['sl_no', 'division', 'schemes', 'bfm_%', 
+                'functionality_%', 'performance_%', 'workload_factor', 'weighted_score', 'rank', 'grade']
+        div_group = div_group[cols]
+        
         div_group = round_numeric_columns(div_group)
 
         st.session_state.so_group = so_group
