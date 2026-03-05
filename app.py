@@ -8,7 +8,6 @@ from reportlab.lib.units import inch
 from reportlab.lib.pagesizes import landscape, A4
 
 st.set_page_config(layout="wide")
-st.image("logo.jpg", width=140)
 st.title("JJM Performance Monitoring Dashboard")
 
 st.markdown("Upload BFM, Functionality and SO Details files")
@@ -239,16 +238,16 @@ if generate:
 
         # ================= SUB =================
         sub_group = df.groupby(['sub_divisions', 'division']).agg({
-            'so_name': 'nunique',
+            'imis_id': 'count',
             'bfm_%': 'mean',
             'functionality_%': 'mean',
             'performance_%': 'mean'
         }).reset_index()
 
-        sub_group.rename(columns={'so_name': 'so_count'}, inplace=True)
+        sub_group.rename(columns={'imis_id': 'schemes'}, inplace=True)
 
-        max_so = sub_group['so_count'].max()
-        sub_group['workload_factor'] = 1 + (sub_group['so_count'] / max_so)
+        max_schemes = sub_group['schemes'].max()
+        sub_group['workload_factor'] = 1 + (sub_group['schemes'] / max_schemes)
         sub_group['weighted_score'] = sub_group['performance_%'] * sub_group['workload_factor']
 
         max_weighted_sub = sub_group['weighted_score'].max()
@@ -261,16 +260,16 @@ if generate:
 
         # ================= DIV =================
         div_group = df.groupby(['division']).agg({
-            'sub_divisions': 'nunique',
+            'imis_id': 'count',
             'bfm_%': 'mean',
             'functionality_%': 'mean',
             'performance_%': 'mean'
         }).reset_index()
 
-        div_group.rename(columns={'sub_divisions': 'subdivision_count'}, inplace=True)
+        div_group.rename(columns={'imis_id': 'schemes'}, inplace=True)
 
-        max_sub = div_group['subdivision_count'].max()
-        div_group['workload_factor'] = 1 + (div_group['subdivision_count'] / max_sub)
+        max_schemes = div_group['schemes'].max()
+        div_group['workload_factor'] = 1 + (div_group['schemes'] / max_schemes)
         div_group['weighted_score'] = div_group['performance_%'] * div_group['workload_factor']
 
         max_weighted_div = div_group['weighted_score'].max()
@@ -294,25 +293,23 @@ if generate:
 
 if st.session_state.reports_generated:
 
-    st.header("🏅SO Ranking")
+    st.header("SO Ranking")
     st.dataframe(style_rank_column(st.session_state.so_group))
     st.download_button("Download SO Ranking PDF",
                        generate_pdf("SO Ranking", st.session_state.so_group),
                        "SO_Ranking_Report.pdf",
                        "application/pdf")
 
-    st.header("🏅Subdivision Ranking")
+    st.header("Subdivision Ranking")
     st.dataframe(style_rank_column(st.session_state.sub_group))
     st.download_button("Download Subdivision Ranking PDF",
                        generate_pdf("Subdivision Ranking", st.session_state.sub_group),
                        "Subdivision_Ranking_Report.pdf",
                        "application/pdf")
 
-    st.header("🏅Division Ranking")
+    st.header("Division Ranking")
     st.dataframe(style_rank_column(st.session_state.div_group))
     st.download_button("Download Division Ranking PDF",
                        generate_pdf("Division Ranking", st.session_state.div_group),
                        "Division_Ranking_Report.pdf",
                        "application/pdf")
-
-
