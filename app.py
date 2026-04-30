@@ -35,24 +35,56 @@ generate = st.button("Generate Report")
 
 # ================= FILE READ =================
 
-def detect_header(file):
-    raw = pd.read_excel(file, header=None)
-    for i in range(len(raw)):
-        row = raw.iloc[i].astype(str).str.lower().tolist()
+def detect_header_row(raw_df):
+    """Scan rows to find the one containing 'imis' — works for both Excel and CSV raw reads."""
+    for i in range(len(raw_df)):
+        row = raw_df.iloc[i].astype(str).str.lower().tolist()
         if any("imis" in cell for cell in row):
             return i
     return None
 
+
+def clean_columns(df):
+    """
+    1. Convert ALL column names to str (fixes float NaN column names).
+    2. Strip whitespace and lowercase.
+    3. Drop any column whose name became 'nan' (was NaN in the source).
+    """
+    df.columns = df.columns.astype(str).str.strip().str.lower()
+    df = df.loc[:, ~df.columns.isin(["nan", ""])]
+    return df
+
+
 def read_excel_safe(file):
-    header_row = detect_header(file)
+    raw = pd.read_excel(file, header=None)
+    header_row = detect_header_row(raw)
     if header_row is None:
-        st.error(f"Header row not detected in {file.name}")
+        st.error(f"Header row not detected in {file.name}. Make sure the file contains a column with 'imis' in its header.")
         st.stop()
-    return pd.read_excel(file, header=header_row)
+    df = pd.read_excel(file, header=header_row)
+    return clean_columns(df)
+
+
+def read_csv_safe(file):
+    """Read CSV with automatic header-row detection (handles metadata rows above real headers)."""
+    # First pass: read without headers to scan for the 'imis' row
+    file.seek(0)
+    raw = pd.read_csv(file, header=None, dtype=str)
+    header_row = detect_header_row(raw)
+
+    # Second pass: read with the correct header row
+    file.seek(0)
+    if header_row is not None and header_row > 0:
+        df = pd.read_csv(file, header=header_row)
+    else:
+        df = pd.read_csv(file)
+
+    return clean_columns(df)
+
 
 def read_file(file):
     if file.name.endswith(".csv"):
-        return pd.read_csv(file)
+        return read_csv_safe(file)
     return read_excel_safe(file)
 
 
@@ -182,11 +214,27 @@ if generate:
         func = read_file(func_file)
         so = read_file(so_file)
 
-        bfm.columns = bfm.columns.str.strip().str.lower()
-        func.columns = func.columns.str.strip().str.lower()
-        so.columns = so.columns.str.strip().str.lower()
+        # ---- Guard: confirm required columns exist ----
+        required_func = {'imis_id', 'work_status', 'functional_days'}
+        required_so   = {'imis_id', 'so_name', 'sub_divisions', 'division'}
+        required_bfm  = {'imis_id', 'no_of_days_bfm_reported'}
 
-        func = func[func['work_status'].str.lower() == "handed-over"]
+        missing_func = required_func - set(func.columns)
+        missing_so   = required_so   - set(so.columns)
+        missing_bfm  = required_bfm  - set(bfm.columns)
+
+        if missing_func:
+            st.error(f"Functionality file is missing columns: {missing_func}")
+            st.stop()
+        if missing_so:
+            st.error(f"SO Details file is missing columns: {missing_so}")
+            st.stop()
+        if missing_bfm:
+            st.error(f"BFM file is missing columns: {missing_bfm}")
+            st.stop()
+
+        # ---- Filter handed-over records ----
+        func = func[func['work_status'].astype(str).str.strip().str.lower() == "handed-over"]
 
         if "division" in func.columns:
             func = func.drop(columns=["division"])
@@ -203,12 +251,22 @@ if generate:
             how='left'
         )
 
-        df['no_of_days_bfm_reported'] = df['no_of_days_bfm_reported'].fillna(0)
+        df['no_of_days_bfm_reported'] = pd.to_numeric(
+            df['no_of_days_bfm_reported'], errors='coerce'
+        ).fillna(0)
+
+        df['functional_days'] = pd.to_numeric(
+            df['functional_days'], errors='coerce'
+        ).fillna(0)
 
         max_days = max(
             df['functional_days'].max(),
             df['no_of_days_bfm_reported'].max()
         )
+
+        if max_days == 0:
+            st.error("max_days is 0 — check that functional_days and no_of_days_bfm_reported have valid numeric values.")
+            st.stop()
 
         df['bfm_%'] = (df['no_of_days_bfm_reported'] / max_days) * 100
         df['functionality_%'] = (df['functional_days'] / max_days) * 100
@@ -232,12 +290,10 @@ if generate:
         so_group['sl_no'] = range(1, len(so_group) + 1)
         so_group['rank'] = range(1, len(so_group) + 1)
         so_group = assign_grade_by_rank(so_group)
-        
-        # Reorder columns: sl_no first
-        cols = ['sl_no', 'so_name', 'sub_divisions', 'division', 'schemes', 'bfm_%', 
+
+        cols = ['sl_no', 'so_name', 'sub_divisions', 'division', 'schemes', 'bfm_%',
                 'functionality_%', 'performance_%', 'workload_factor', 'weighted_score', 'rank', 'grade']
         so_group = so_group[cols]
-        
         so_group = round_numeric_columns(so_group)
 
         # ================= SUB =================
@@ -258,12 +314,10 @@ if generate:
         sub_group['sl_no'] = range(1, len(sub_group) + 1)
         sub_group['rank'] = range(1, len(sub_group) + 1)
         sub_group = assign_grade_by_rank(sub_group)
-        
-        # Reorder columns: sl_no first
-        cols = ['sl_no', 'sub_divisions', 'division', 'schemes', 'bfm_%', 
+
+        cols = ['sl_no', 'sub_divisions', 'division', 'schemes', 'bfm_%',
                 'functionality_%', 'performance_%', 'workload_factor', 'weighted_score', 'rank', 'grade']
         sub_group = sub_group[cols]
-        
         sub_group = round_numeric_columns(sub_group)
 
         # ================= DIV =================
@@ -284,12 +338,10 @@ if generate:
         div_group['sl_no'] = range(1, len(div_group) + 1)
         div_group['rank'] = range(1, len(div_group) + 1)
         div_group = assign_grade_by_rank(div_group)
-        
-        # Reorder columns: sl_no first
-        cols = ['sl_no', 'division', 'schemes', 'bfm_%', 
+
+        cols = ['sl_no', 'division', 'schemes', 'bfm_%',
                 'functionality_%', 'performance_%', 'workload_factor', 'weighted_score', 'rank', 'grade']
         div_group = div_group[cols]
-        
         div_group = round_numeric_columns(div_group)
 
         st.session_state.so_group = so_group
