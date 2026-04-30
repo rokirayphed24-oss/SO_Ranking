@@ -34,16 +34,25 @@ so_file   = st.file_uploader("Upload SO Details File",    type=["xlsx", "csv"])
 generate = st.button("Generate Report")
 
 
-# ================= FILE READ =================
+# ================= FILE HELPERS =================
+
+def normalize_id(series):
+    """
+    Normalise IMIS IDs so that "12345", "12345.0", 12345, 12345.0 all become "12345".
+    This prevents merge failures when one file stores IDs as float and another as int.
+    """
+    def _fix(val):
+        s = str(val).strip()
+        try:
+            return str(int(float(s)))
+        except (ValueError, OverflowError):
+            return s
+    return series.map(_fix)
+
 
 def detect_header_row(raw_df):
-    """
-    Scan every row of a header=None DataFrame and return the index of the
-    first row that contains 'imis' in any cell.
-    Uses explicit str() per cell to guarantee no float-iteration errors.
-    """
+    """Return index of first row whose cells contain the substring 'imis'."""
     for i in range(len(raw_df)):
-        # tolist() first, then explicit str() — avoids astype edge-cases
         row = [str(v).lower() for v in raw_df.iloc[i].tolist()]
         if any("imis" in cell for cell in row):
             return i
@@ -52,11 +61,9 @@ def detect_header_row(raw_df):
 
 def clean_columns(df):
     """
-    Guarantee every column name is a plain stripped lowercase Python string.
-    1. Explicit str() on every column name  →  float NaN → "nan"
-    2. Strip BOM (\\ufeff) common in Excel-CSV exports
-    3. strip + lower
-    4. Drop columns named "nan" or "" (empty/unnamed columns)
+    Make every column name a plain stripped lowercase Python string.
+    Handles: float NaN names, BOM characters, leading/trailing whitespace.
+    Drops columns with empty or 'nan' names.
     """
     new_cols = [
         str(c).replace('\ufeff', '').strip().lower()
@@ -68,33 +75,31 @@ def clean_columns(df):
 
 
 def read_excel_safe(file):
+    # First pass with dtype=str just to find the header row safely
     file.seek(0)
-    raw = pd.read_excel(file, header=None, dtype=str)   # dtype=str → no float cells
+    raw = pd.read_excel(file, header=None, dtype=str)
     header_row = detect_header_row(raw)
     if header_row is None:
-        st.error(
-            f"Could not find a header row containing 'imis' in **{file.name}**. "
-            "Please check the file."
-        )
+        st.error(f"Could not find a header row containing 'imis' in **{file.name}**.")
         st.stop()
+    # Second pass: read normally (let pandas infer numeric types)
     file.seek(0)
     df = pd.read_excel(file, header=header_row)
     return clean_columns(df)
 
 
 def read_csv_safe(file):
-    # First pass: scan raw rows for header
+    # First pass with dtype=str to find the header row safely
     file.seek(0)
     raw = pd.read_csv(file, header=None, dtype=str)
     header_row = detect_header_row(raw)
 
-    # Second pass: read with correct header, keep everything as str initially
+    # Second pass: read normally (let pandas infer numeric types)
     file.seek(0)
     if header_row is not None and header_row > 0:
-        df = pd.read_csv(file, header=header_row, dtype=str)
+        df = pd.read_csv(file, header=header_row)
     else:
-        df = pd.read_csv(file, dtype=str)
-
+        df = pd.read_csv(file)
     return clean_columns(df)
 
 
@@ -104,10 +109,7 @@ def read_file(file):
     return read_excel_safe(file)
 
 
-# ================= HELPERS =================
-
 def to_numeric_safe(series):
-    """Convert a column to numeric, coercing errors, then fill NaN with 0."""
     return pd.to_numeric(series, errors='coerce').fillna(0)
 
 
@@ -116,6 +118,8 @@ def round_numeric_columns(df):
     df[numeric_cols] = df[numeric_cols].round(2)
     return df
 
+
+# ================= RANK GRADING =================
 
 def assign_grade_by_rank(df):
     total   = len(df)
@@ -132,6 +136,8 @@ def assign_grade_by_rank(df):
     df["grade"] = grades
     return df
 
+
+# ================= STYLING =================
 
 def style_rank_column(df):
     def color_rank(row):
@@ -166,7 +172,7 @@ def generate_pdf(title, df):
     table     = Table(data, colWidths=[col_width] * len(df.columns), repeatRows=1)
 
     style = TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+        ('BACKGROUND', (0, 0), (-1,  0), colors.grey),
         ('GRID',       (0, 0), (-1, -1), 0.5, colors.black),
         ('FONTSIZE',   (0, 0), (-1, -1), 7),
     ])
@@ -203,13 +209,13 @@ if generate:
         st.stop()
 
     try:
-        # ---- Read files ----
+        # ---- Read files (dtype inferred — no forced str this time) ----
         bfm  = read_file(bfm_file)
         func = read_file(func_file)
         so   = read_file(so_file)
 
-        # ---- Debug expander: shows detected column names ----
-        with st.expander("🔍 Debug: detected column names (expand to verify)"):
+        # ---- Debug expander ----
+        with st.expander("🔍 Debug: detected column names"):
             st.write("**BFM columns:**",  list(bfm.columns))
             st.write("**Func columns:**", list(func.columns))
             st.write("**SO columns:**",   list(so.columns))
@@ -224,24 +230,26 @@ if generate:
         missing_bfm  = required_bfm  - set(bfm.columns)
 
         if missing_func:
-            st.error(f"Functionality file is missing columns: {missing_func}")
+            st.error(f"Functionality file missing columns: {missing_func}")
             st.stop()
         if missing_so:
-            st.error(f"SO Details file is missing columns: {missing_so}")
+            st.error(f"SO Details file missing columns: {missing_so}")
             st.stop()
         if missing_bfm:
-            st.error(f"BFM file is missing columns: {missing_bfm}")
+            st.error(f"BFM file missing columns: {missing_bfm}")
             st.stop()
 
-        # ---- Normalise key ID / text columns ----
-        func['imis_id']     = func['imis_id'].astype(str).str.strip()
-        so['imis_id']       = so['imis_id'].astype(str).str.strip()
-        bfm['imis_id']      = bfm['imis_id'].astype(str).str.strip()
+        # ---- Normalise IMIS IDs: "12345.0" → "12345" across all three files ----
+        func['imis_id'] = normalize_id(func['imis_id'])
+        so['imis_id']   = normalize_id(so['imis_id'])
+        bfm['imis_id']  = normalize_id(bfm['imis_id'])
+
+        # ---- Normalise work_status text ----
         func['work_status'] = func['work_status'].astype(str).str.strip().str.lower()
 
-        # ---- Convert numeric columns BEFORE any arithmetic ----
-        func['functional_days']         = to_numeric_safe(func['functional_days'])
-        bfm['no_of_days_bfm_reported']  = to_numeric_safe(bfm['no_of_days_bfm_reported'])
+        # ---- Convert numeric columns ----
+        func['functional_days']        = to_numeric_safe(func['functional_days'])
+        bfm['no_of_days_bfm_reported'] = to_numeric_safe(bfm['no_of_days_bfm_reported'])
 
         # ---- Filter handed-over ----
         func = func[func['work_status'] == "handed-over"].copy()
@@ -253,7 +261,7 @@ if generate:
             )
             st.stop()
 
-        # ---- Drop division from func (will come from SO merge) ----
+        # ---- Drop division from func (comes from SO) ----
         if "division" in func.columns:
             func = func.drop(columns=["division"])
 
@@ -268,16 +276,32 @@ if generate:
         )
         df['no_of_days_bfm_reported'] = to_numeric_safe(df['no_of_days_bfm_reported'])
 
+        # ---- Warn if merge produced no matches ----
+        unmatched = df['so_name'].isna().sum()
+        if unmatched > 0:
+            st.warning(
+                f"⚠️ {unmatched} rows in the Functionality file had no matching imis_id "
+                f"in the SO file. Those rows will be excluded from SO/Sub/Division ranking. "
+                f"Sample unmatched IDs: {df.loc[df['so_name'].isna(), 'imis_id'].head(5).tolist()}"
+            )
+
+        # ---- Drop rows where SO info is missing (unmatched merges) ----
+        df = df.dropna(subset=['so_name', 'sub_divisions', 'division'])
+
+        if df.empty:
+            st.error(
+                "After merging, no rows have SO/Subdivision/Division info. "
+                "Check that imis_id values match between your files."
+            )
+            st.stop()
+
         # ---- Compute scores ----
         max_days = max(
             df['functional_days'].max(),
             df['no_of_days_bfm_reported'].max()
         )
         if max_days == 0:
-            st.error(
-                "max_days is 0 — both functional_days and no_of_days_bfm_reported "
-                "contain only zeros or blanks. Check your files."
-            )
+            st.error("max_days is 0 — functional_days and no_of_days_bfm_reported have no valid values.")
             st.stop()
 
         df['bfm_%']           = (df['no_of_days_bfm_reported'] / max_days) * 100
@@ -285,17 +309,17 @@ if generate:
         df['performance_%']   = 0.5 * df['bfm_%'] + 0.5 * df['functionality_%']
 
         # ================= SO =================
-        so_group = df.groupby(['so_name', 'sub_divisions', 'division'], dropna=False).agg(
+        so_group = df.groupby(['so_name', 'sub_divisions', 'division']).agg(
             schemes          =('imis_id',        'count'),
             bfm_pct          =('bfm_%',          'mean'),
             functionality_pct=('functionality_%', 'mean'),
             performance_pct  =('performance_%',   'mean')
         ).reset_index()
         so_group.rename(columns={
-            'bfm_pct': 'bfm_%', 'functionality_pct': 'functionality_%',
+            'bfm_pct': 'bfm_%',
+            'functionality_pct': 'functionality_%',
             'performance_pct': 'performance_%'
         }, inplace=True)
-
         max_s = so_group['schemes'].max()
         so_group['workload_factor'] = 1 + (so_group['schemes'] / max_s)
         so_group['weighted_score']  = so_group['performance_%'] * so_group['workload_factor']
@@ -309,17 +333,17 @@ if generate:
         so_group = round_numeric_columns(so_group)
 
         # ================= SUB =================
-        sub_group = df.groupby(['sub_divisions', 'division'], dropna=False).agg(
+        sub_group = df.groupby(['sub_divisions', 'division']).agg(
             schemes          =('imis_id',        'count'),
             bfm_pct          =('bfm_%',          'mean'),
             functionality_pct=('functionality_%', 'mean'),
             performance_pct  =('performance_%',   'mean')
         ).reset_index()
         sub_group.rename(columns={
-            'bfm_pct': 'bfm_%', 'functionality_pct': 'functionality_%',
+            'bfm_pct': 'bfm_%',
+            'functionality_pct': 'functionality_%',
             'performance_pct': 'performance_%'
         }, inplace=True)
-
         max_s = sub_group['schemes'].max()
         sub_group['workload_factor'] = 1 + (sub_group['schemes'] / max_s)
         sub_group['weighted_score']  = sub_group['performance_%'] * sub_group['workload_factor']
@@ -333,17 +357,17 @@ if generate:
         sub_group = round_numeric_columns(sub_group)
 
         # ================= DIV =================
-        div_group = df.groupby(['division'], dropna=False).agg(
+        div_group = df.groupby(['division']).agg(
             schemes          =('imis_id',        'count'),
             bfm_pct          =('bfm_%',          'mean'),
             functionality_pct=('functionality_%', 'mean'),
             performance_pct  =('performance_%',   'mean')
         ).reset_index()
         div_group.rename(columns={
-            'bfm_pct': 'bfm_%', 'functionality_pct': 'functionality_%',
+            'bfm_pct': 'bfm_%',
+            'functionality_pct': 'functionality_%',
             'performance_pct': 'performance_%'
         }, inplace=True)
-
         max_s = div_group['schemes'].max()
         div_group['workload_factor'] = 1 + (div_group['schemes'] / max_s)
         div_group['weighted_score']  = div_group['performance_%'] * div_group['workload_factor']
@@ -363,7 +387,6 @@ if generate:
 
     except Exception as e:
         st.error(f"Critical Error: {e}")
-        # Full traceback shown so you can see the EXACT line that failed
         st.code(traceback.format_exc(), language="python")
 
 
